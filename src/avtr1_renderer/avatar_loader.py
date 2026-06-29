@@ -87,6 +87,7 @@ class Avatar:
     mask: torch.Tensor  # (1, H, W)           pasteback mask (pre-warped)
     source: torch.Tensor  # (3, H, W)         source frame RGB in [0, 1] (grey-bg or original-bg)
     no_matting: bool = False  # skip MODNet; source carries the real background
+    no_matting_source: str = ""  # "json" | "portrait_inference" | "default" | ""
 
 
 @dataclass(slots=True, frozen=True)

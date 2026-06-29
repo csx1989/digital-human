@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Avatar Session Client</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <h1>Avatar Session Client</h1>
+    <p class="subtitle">Phase 7 — Browser Mic → VAD/Smart Turn → STT → LLM → TTS → Talking Avatar</p>
+
+    <div class="controls">
+      <label for="workerUrl">Worker URL</label>
+      <input
+        type="text"
+        id="workerUrl"
+        value="https://avatar-session-bridge.vallangirakesh.workers.dev"
+      >
+
+      <div class="buttons">
+        <button id="connectBtn">Connect</button>
+        <button id="stopBtn" disabled>Stop</button>
+      </div>
+
+      <div class="buttons mic-buttons">
+        <button id="startMicBtn" disabled>Start Mic</button>
+        <button id="stopMicBtn" disabled>Stop Mic</button>
+      </div>
+
+      <label class="raw-audio-label">
+        <input type="checkbox" id="rawAudio"> Disable browser audio processing (echo cancel / noise sup / AGC)
+      </label>
+
+      <div id="statusBar" class="status-bar status-disconnected">
+        <span id="statusText">disconnected</span>
+      </div>
+
+      <div class="telemetry-row">
+        <div id="audioStats" class="audio-stats"></div>
+        <div id="speechStatus" class="speech-status"></div>
+      </div>
+    </div>
+
+    <div class="transcript-panel">
+      <h2>Transcripts</h2>
+      <div id="transcriptList" class="transcript-list"></div>
+    </div>
+
+    <div class="main-area">
+      <div class="avatar-panel">
+        <h2>Avatar Output</h2>
+        <div class="avatar-frame" id="avatarFrame">
+          <span class="placeholder">No frame yet</span>
+          <video id="fmp4Video" autoplay muted playsinline style="display:none; width:100%; border-radius:12px; background:#000;"></video>
+          <button id="fmp4FullscreenBtn" class="fmp4-fullscreen-btn" title="Fullscreen" style="display:none;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg>
+          </button>
+        </div>
+        <div id="frameMeta" class="frame-meta"></div>
+        <div id="sfuDiag" class="frame-meta" style="display:none; font-family:monospace; font-size:11px; margin-top:4px; color:#0a0;"></div>
+      </div>
+
+      <div class="log-panel">
+        <div class="log-header">
+          <h2>Log</h2>
+          <button id="copyLogsBtn" class="copy-btn" title="Copy all logs">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"/></svg>
+          </button>
+        </div>
+        <div id="logOutput" class="log-output"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

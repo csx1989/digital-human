@@ -1,0 +1,14 @@
+# Copy this file to .dev.vars and fill in your values.
+#   cp .dev.vars.example .dev.vars
+#
+# .dev.vars is gitignored — used for LOCAL `wrangler dev` only.
+# For DEPLOYED POC, use wrangler secrets instead:
+#   npx wrangler secret put CALLS_APP_SECRET
+#   npx wrangler secret put POC_ACCESS_TOKEN
+
+# From Cloudflare dashboard → Realtime → your App → "Secret"
+CALLS_APP_SECRET=your-app-secret-here
+
+# Any random string you choose. Acts as a gate on all /api/* calls.
+# Generate one: openssl rand -hex 24
+POC_ACCESS_TOKEN=change-me-to-a-random-string

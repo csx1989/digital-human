@@ -1,0 +1,70 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "avatar-session-bridge-test",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-29",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "AVATAR_SESSION",
+        "class_name": "AvatarSessionDO"
+      },
+      {
+        "name": "SFU_CAPACITY_MANAGER",
+        "class_name": "SfuCapacityManager"
+      }
+    ]
+  },
+  "vars": {
+    "POSTHOG_HOST": "https://eu.i.posthog.com",
+    "MODAL_SESSION_START_URL": "https://mock.modal.run/start",
+    "MODAL_SESSION_END_URL": "https://mock.modal.run/end",
+    "MODAL_SESSION_STREAM_FMP4_AV_URL": "https://mock.modal.run/stream",
+    "MODAL_SESSION_STATUS_URL": "https://mock.modal.run/status",
+    "MODAL_SESSION_PUSH_AUDIO_URL": "https://mock.modal.run/push",
+    "MODAL_SESSION_PUSH_AUDIO_BATCH_URL": "https://mock.modal.run/push-batch",
+    "ENABLE_LEGACY_MODAL_PROTOCOL": "false",
+    "FMP4_RELAY_PACE_MS": "200",
+    "FMP4_RELAY_MAX_QUEUE": "500",
+    "AVTR_TEST_HOOK_SECRET": "test-hook-secret",
+    "AVTR_API_KEYS": "test-api-key",
+    "AVTR_SESSION_TOKEN_SECRET": "test-token-secret",
+    "AVTR_SFU_BETA_TOKEN_SECRET": "test-sfu-beta-secret-min-32-chars-long",
+    "AVTR_SFU_BETA_TENANTS": "beta-tenant-1,beta-tenant-2",
+    "AVTR_REALTIME_SFU_ENABLED": "true",
+    "AVTR_REALTIME_SFU_DEFAULT": "websocket_fmp4",
+    "CALLS_APP_ID": "test-app-id",
+    "CALLS_APP_SECRET": "test-app-secret",
+    "AVTR_SFU_TURN_KEY_ID": "test-turn-key-id",
+    "AVTR_SFU_TURN_KEY_API_TOKEN": "test-turn-api-token",
+    "AVTR_SFU_REQUIRE_TURN": "true",
+    "MODAL_WORKER_SECRET": "test-modal-secret",
+    "AVTR_MODAL_REQUEST_SIGNING_SECRET": "test-modal-signing-secret",
+    "WORKER_BASE_URL": "https://test.worker.dev",
+    "AVTR_SFU_KEEPALIVE_MAX_AGE_MS": "2000",
+    "AVTR_SFU_SESSION_MAX_AGE_MS": "2000",
+    "AVTR_SFU_KEEPALIVE_MAX_FAILURES": "2",
+    "AVTR_ADMIN_FORCE_CLEAR_TOKEN": "test-admin-force-clear-token"
+  },
+  "ai": {
+    "binding": "AI"
+  },
+  "d1_databases": [
+    {
+      "binding": "CATALOG_DB",
+      "database_name": "avtr-catalog-test",
+      "database_id": "test-catalog-db"
+    }
+  ],
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["AvatarSessionDO"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["SfuCapacityManager"]
+    }
+  ]
+}

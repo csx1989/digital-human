@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AVTR Realtime SFU — Phase A Echo Test</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #0d1117;
+      --fg: #c9d1d9;
+      --accent: #58a6ff;
+      --border: #30363d;
+      --panel: #161b22;
+      --ok: #3fb950;
+      --err: #f85149;
+      --warn: #d29922;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      margin: 0;
+      padding: 1.5rem;
+      max-width: 1200px;
+    }
+    h1 { font-size: 1.4rem; font-weight: 600; margin: 0 0 0.25rem; }
+    h2 { font-size: 1rem; font-weight: 600; margin: 1.5rem 0 0.5rem; color: var(--accent); }
+    .subtitle { color: #8b949e; font-size: 0.85rem; margin-bottom: 1rem; }
+
+    .config-bar {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+      flex-wrap: wrap;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      margin-bottom: 1rem;
+    }
+    .config-bar label { font-size: 0.85rem; }
+    input[type="password"] {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--fg);
+      border-radius: 4px;
+      padding: 0.35rem 0.5rem;
+      font-family: monospace;
+      font-size: 0.85rem;
+      width: 240px;
+    }
+    button {
+      background: #21262d;
+      border: 1px solid var(--border);
+      color: var(--fg);
+      border-radius: 6px;
+      padding: 0.4rem 1rem;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    button:hover:not(:disabled) { background: #30363d; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    button.primary { background: #1f6feb; border-color: #1f6feb; }
+    button.primary:hover:not(:disabled) { background: #388bfd; }
+    button.danger { background: #da3633; border-color: #da3633; }
+    button.danger:hover:not(:disabled) { background: #f85149; }
+
+    #configStatus { font-size: 0.85rem; }
+    .status-ok { color: var(--ok); }
+    .status-err { color: var(--err); }
+    .status-warn { color: var(--warn); }
+
+    .controls {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+    }
+    .controls label { font-size: 0.8rem; color: #8b949e; }
+
+    .video-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+    @media (max-width: 700px) { .video-grid { grid-template-columns: 1fr; } }
+
+    .video-panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .video-panel .label {
+      padding: 0.4rem 0.75rem;
+      font-size: 0.75rem;
+      color: #8b949e;
+      border-bottom: 1px solid var(--border);
+    }
+    canvas, video {
+      width: 100%;
+      display: block;
+      background: #000;
+      aspect-ratio: 4 / 3;
+    }
+
+    .diag-panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+    }
+    #diagOutput {
+      font-family: "SF Mono", Monaco, monospace;
+      font-size: 0.8rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      margin: 0;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    .diag-key { color: var(--accent); }
+    .diag-ok { color: var(--ok); }
+    .diag-err { color: var(--err); }
+
+    .badge {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: 0.7rem;
+      font-weight: 600;
+    }
+    .badge-idle { background: #21262d; color: #8b949e; }
+    .badge-ok { background: #1a3d2e; color: var(--ok); }
+    .badge-err { background: #3d1a1d; color: var(--err); }
+  </style>
+</head>
+<body>
+
+  <h1>Phase A — Realtime SFU Echo Test</h1>
+  <p class="subtitle">
+    Canvas video track &rarr; Publisher PC &rarr; Cloudflare SFU &rarr; Subscriber PC &rarr; Remote &lt;video&gt;
+  </p>
+
+  <!-- Config / Access Gate -->
+  <div class="config-bar">
+    <label>POC Token:</label>
+    <input type="password" id="pocToken" placeholder="paste POC_ACCESS_TOKEN" autocomplete="off">
+    <button id="checkBtn">Check Config</button>
+    <span id="configStatus"></span>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <button id="startBtn" class="primary" disabled>Start Echo Test</button>
+    <button id="stopBtn" class="danger" disabled>Disconnect</button>
+    <label><input type="checkbox" id="cameraMode"> Camera mode (instead of canvas pattern)</label>
+  </div>
+
+  <!-- Video Panels -->
+  <div class="video-grid">
+    <div class="video-panel">
+      <div class="label">Local — Canvas Publisher <span id="pubBadge" class="badge badge-idle">idle</span></div>
+      <canvas id="localCanvas" width="640" height="480"></canvas>
+    </div>
+    <div class="video-panel">
+      <div class="label">Remote — SFU Subscriber <span id="subBadge" class="badge badge-idle">idle</span></div>
+      <video id="remoteVideo" autoplay muted playsinline></video>
+    </div>
+  </div>
+
+  <!-- Diagnostics -->
+  <div class="diag-panel">
+    <h2 style="margin-top:0">Diagnostics</h2>
+    <pre id="diagOutput"></pre>
+  </div>
+
+<script>
+"use strict";
+
+// ===========================================================================
+// State
+// ===========================================================================
+let pubPC = null;
+let subPC = null;
+let pubSessionId = null;
+let subSessionId = null;
+let canvasAnimId = null;
+let statsIntervalId = null;
+let playStartTime = null;
+let publishedTrackName = null;
+let cameraStream = null;
+let pubCloseTracks = [];
+let subCloseTracks = [];
+
+const diag = {};
+const els = {
+  pocToken:    document.getElementById("pocToken"),
+  checkBtn:    document.getElementById("checkBtn"),
+  configStatus:document.getElementById("configStatus"),
+  startBtn:    document.getElementById("startBtn"),
+  stopBtn:     document.getElementById("stopBtn"),
+  cameraMode:  document.getElementById("cameraMode"),
+  localCanvas: document.getElementById("localCanvas"),
+  remoteVideo: document.getElementById("remoteVideo"),
+  diagOutput:  document.getElementById("diagOutput"),
+  pubBadge:    document.getElementById("pubBadge"),
+  subBadge:    document.getElementById("subBadge"),
+};
+
+// ===========================================================================
+// POC Token persistence
+// ===========================================================================
+const SAVED_TOKEN = sessionStorage.getItem("avtr_poc_token") || "";
+if (SAVED_TOKEN) els.pocToken.value = SAVED_TOKEN;
+
+function pocToken() {
+  const t = els.pocToken.value.trim();
+  sessionStorage.setItem("avtr_poc_token", t);
+  return t;
+}
+
+// Auto-detect camera mode from URL
+if (new URLSearchParams(location.search).get("camera") === "1") {
+  els.cameraMode.checked = true;
+}
+
+// ===========================================================================
+// API helpers
+// ===========================================================================
+async function api(path, opts = {}) {
+  return fetch(path, {
+    ...opts,
+    headers: { "content-type": "application/json", "x-poc-token": pocToken(), ...(opts.headers || {}) },
+  });
+}
+
+async function apiJson(path, opts = {}) {
+  const resp = await api(path, opts);
+  const text = await resp.text();
+  let body;
+  try { body = JSON.parse(text); } catch { body = { raw: text }; }
+  if (!resp.ok) throw new Error(`${path} → ${resp.status}: ${JSON.stringify(body)}`);
+  return body;
+}
+
+// ===========================================================================
+// Diagnostics
+// ===========================================================================
+function setDiag(key, val) { diag[key] = val; renderDiag(); }
+
+function renderDiag() {
+  const lines = Object.keys(diag).sort().map((k) => `${k}: ${diag[k]}`);
+  els.diagOutput.textContent = lines.join("\n");
+}
+
+function setBadge(el, state, text) {
+  el.className = "badge " + (state === "ok" ? "badge-ok" : state === "err" ? "badge-err" : "badge-idle");
+  el.textContent = text;
+}
+
+function log(msg) {
+  const ts = new Date().toLocaleTimeString();
+  console.log(`[${ts}] ${msg}`);
+  setDiag("log.last", msg);
+}
+
+// ===========================================================================
+// Canvas test-pattern animation
+// ===========================================================================
+function startCanvasAnim() {
+  const canvas = els.localCanvas;
+  const ctx = canvas.getContext("2d");
+  let frame = 0;
+
+  function draw() {
+    frame++;
+    const w = canvas.width, h = canvas.height;
+    const t = frame / 25;
+
+    ctx.fillStyle = "#0d1117";
+    ctx.fillRect(0, 0, w, h);
+
+    // grid
+    ctx.strokeStyle = "#21262d";
+    ctx.lineWidth = 1;
+    for (let x = 0; x <= w; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
+    for (let y = 0; y <= h; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
+
+    // bouncing circle
+    const cx = w / 2 + Math.sin(t * 2.1) * (w / 3.2);
+    const cy = h / 2 + Math.cos(t * 1.4) * (h / 3.2);
+    const r = 45 + Math.sin(t * 3) * 20;
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    grad.addColorStop(0, "#58a6ff");
+    grad.addColorStop(0.7, "#1f6feb");
+    grad.addColorStop(1, "#0d1117");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // second shape — rotating square
+    ctx.save();
+    ctx.translate(w / 2, h / 2);
+    ctx.rotate(t * 0.8);
+    ctx.strokeStyle = "#f778ba";
+    ctx.lineWidth = 3;
+    const s = 100;
+    ctx.strokeRect(-s / 2, -s / 2, s, s);
+    ctx.restore();
+
+    // text overlay
+    ctx.fillStyle = "#c9d1d9";
+    ctx.font = "bold 24px monospace";
+    ctx.fillText("AVTR SFU POC", 16, 34);
+    ctx.font = "bold 20px monospace";
+    ctx.fillText(new Date().toISOString().substr(11, 8), 16, 62);
+    ctx.font = "16px monospace";
+    ctx.fillText(`frame ${frame}`, 16, h - 16);
+    ctx.textAlign = "right";
+    ctx.fillText(`${w}x${h} @ 25fps`, w - 16, h - 16);
+    ctx.textAlign = "left";
+
+    canvasAnimId = requestAnimationFrame(draw);
+  }
+  draw();
+}
+
+function stopCanvasAnim() {
+  if (canvasAnimId) { cancelAnimationFrame(canvasAnimId); canvasAnimId = null; }
+}
+
+// ===========================================================================
+// PeerConnection factory
+// ===========================================================================
+function createPC(label) {
+  const pc = new RTCPeerConnection({
+    iceServers: [{ urls: "stun:stun.cloudflare.com:3478" }],
+    bundlePolicy: "max-bundle",
+  });
+
+  pc.addEventListener("iceconnectionstatechange", () => {
+    setDiag(`${label}.iceState`, pc.iceConnectionState);
+    console.log(`[${label}] ICE:`, pc.iceConnectionState);
+    if (label === "publisher") {
+      setBadge(els.pubBadge, pc.iceConnectionState === "connected" ? "ok" : pc.iceConnectionState === "failed" ? "err" : "idle", pc.iceConnectionState);
+    } else {
+      setBadge(els.subBadge, pc.iceConnectionState === "connected" ? "ok" : pc.iceConnectionState === "failed" ? "err" : "idle", pc.iceConnectionState);
+    }
+  });
+  pc.addEventListener("connectionstatechange", () => {
+    setDiag(`${label}.connState`, pc.connectionState);
+  });
+
+  return pc;
+}
+
+// Wait for ICE gathering to complete (makes SDP self-contained).
+function waitIceGathering(pc, ms = 3000) {
+  return new Promise((resolve) => {
+    if (pc.iceGatheringState === "complete") return resolve();
+    let done = false;
+    const finish = () => { if (!done) { done = true; pc.removeEventListener("icegatheringstatechange", c); resolve(); } };
+    const c = () => { if (pc.iceGatheringState === "complete") finish(); };
+    pc.addEventListener("icegatheringstatechange", c);
+    setTimeout(finish, ms);
+  });
+}
+
+// Wait for ICE connected/failed with timeout.
+function waitIceConnected(pc, label, ms = 30000) {
+  return new Promise((resolve, reject) => {
+    if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") return resolve();
+    const to = setTimeout(() => { pc.removeEventListener("iceconnectionstatechange", c); reject(new Error(`${label} ICE timeout (${ms / 1000}s)`)); }, ms);
+    const c = () => {
+      const s = pc.iceConnectionState;
+      if (s === "connected" || s === "completed") { clearTimeout(to); pc.removeEventListener("iceconnectionstatechange", c); resolve(); }
+      else if (s === "failed") { clearTimeout(to); pc.removeEventListener("iceconnectionstatechange", c); reject(new Error(`${label} ICE failed`)); }
+    };
+    pc.addEventListener("iceconnectionstatechange", c);
+  });
+}
+
+// ===========================================================================
+// Check config button
+// ===========================================================================
+els.checkBtn.addEventListener("click", async () => {
+  els.configStatus.textContent = "Checking...";
+  els.configStatus.className = "";
+  els.startBtn.disabled = true;
+  try {
+    const r = await apiJson("/api/health");
+    if (r.configured) {
+      els.configStatus.textContent = "\u2713 SFU configured — ready";
+      els.configStatus.className = "status-ok";
+      els.startBtn.disabled = false;
+    } else {
+      els.configStatus.textContent = "\u2717 SFU not configured (Worker missing CALLS_APP_ID/SECRET)";
+      els.configStatus.className = "status-err";
+    }
+  } catch (e) {
+    els.configStatus.textContent = "\u2717 " + e.message;
+    els.configStatus.className = "status-err";
+  }
+});
+
+// ===========================================================================
+// Start echo test
+// ===========================================================================
+els.startBtn.addEventListener("click", startEchoTest);
+
+async function startEchoTest() {
+  els.startBtn.disabled = true;
+  els.stopBtn.disabled = false;
+  setBadge(els.pubBadge, "idle", "starting");
+  setBadge(els.subBadge, "idle", "pending");
+  log("=== Starting echo test ===");
+
+  try {
+    // 1. Get video track (canvas or camera)
+    const useCamera = els.cameraMode.checked;
+    let videoTrack;
+
+    if (useCamera) {
+      log("Requesting camera access...");
+      cameraStream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
+      videoTrack = cameraStream.getVideoTracks()[0];
+    } else {
+      startCanvasAnim();
+      const cs = els.localCanvas.captureStream(25);
+      videoTrack = cs.getVideoTracks()[0];
+    }
+    log(`Video track: ${videoTrack.id} (${videoTrack.label || "canvas"})`);
+    setDiag("track.local", `${videoTrack.id} [${videoTrack.label || "canvas"}]`);
+
+    // 2. Create publisher SFU session
+    const pubSess = await apiJson("/api/sessions/new", { method: "POST" });
+    pubSessionId = pubSess.sessionId;
+    log(`Publisher session: ${pubSessionId}`);
+    setDiag("session.publisher", pubSessionId);
+
+    // 3. Publisher PC — add canvas/camera track
+    pubPC = createPC("publisher");
+    const transceiver = pubPC.addTransceiver(videoTrack, { direction: "sendonly" });
+
+    // 4. Create offer, gather ICE, send to SFU
+    await pubPC.setLocalDescription(await pubPC.createOffer());
+    await waitIceGathering(pubPC);
+
+    const pubResp = await apiJson(`/api/sessions/${pubSessionId}/tracks/new`, {
+      method: "POST",
+      body: JSON.stringify({
+        sessionDescription: { sdp: pubPC.localDescription.sdp, type: "offer" },
+        tracks: [{ location: "local", mid: transceiver.mid, trackName: transceiver.sender.track.id }],
+      }),
+    });
+
+    await pubPC.setRemoteDescription(new RTCSessionDescription(pubResp.sessionDescription));
+    publishedTrackName = transceiver.sender.track.id;
+    pubCloseTracks = (pubResp.tracks || []).map((t) => ({ mid: t.mid }));
+    log(`Publisher SDP exchange done. closeMids: [${pubCloseTracks.map((t) => t.mid).join(", ")}]`);
+    setDiag("track.publishedName", publishedTrackName);
+    setDiag("track.pubCloseMids", pubCloseTracks.map((t) => t.mid).join(","));
+
+    await waitIceConnected(pubPC, "publisher");
+    log("Publisher connected — media flowing to SFU");
+
+    // 5. Create subscriber SFU session
+    const subSess = await apiJson("/api/sessions/new", { method: "POST" });
+    subSessionId = subSess.sessionId;
+    log(`Subscriber session: ${subSessionId}`);
+    setDiag("session.subscriber", subSessionId);
+
+    // 6. Subscriber PC
+    subPC = createPC("subscriber");
+    const remoteStream = new MediaStream();
+    els.remoteVideo.srcObject = remoteStream;
+
+    // Track listener before pulling
+    const trackPromise = new Promise((resolve, reject) => {
+      const to = setTimeout(() => reject(new Error("Timed out waiting for remote track (15s)")), 15000);
+      subPC.addEventListener("track", (ev) => {
+        clearTimeout(to);
+        log(`Remote track received: ${ev.track.kind} id=${ev.track.id}`);
+        remoteStream.addTrack(ev.track);
+        resolve(ev.track);
+      });
+    });
+
+    // 7. Pull the published track
+    const subResp = await apiJson(`/api/sessions/${subSessionId}/tracks/new`, {
+      method: "POST",
+      body: JSON.stringify({
+        tracks: [{ location: "remote", sessionId: pubSessionId, trackName: publishedTrackName }],
+      }),
+    });
+
+    subCloseTracks = (subResp.tracks || []).map((t) => ({ mid: t.mid }));
+    setDiag("track.subCloseMids", subCloseTracks.map((t) => t.mid).join(","));
+    log(`Subscriber offer from SFU (renegotiation: ${subResp.requiresImmediateRenegotiation}). closeMids: [${subCloseTracks.map((t) => t.mid).join(", ")}]`);
+
+    // 8. Renegotiate — SFU sent an offer, browser answers
+    if (subResp.requiresImmediateRenegotiation) {
+      await subPC.setRemoteDescription(new RTCSessionDescription(subResp.sessionDescription));
+      await subPC.setLocalDescription(await subPC.createAnswer());
+      await waitIceGathering(subPC);
+
+      await apiJson(`/api/sessions/${subSessionId}/renegotiate`, {
+        method: "PUT",
+        body: JSON.stringify({ sessionDescription: { sdp: subPC.localDescription.sdp, type: "answer" } }),
+      });
+      log("Renegotiation complete");
+    }
+
+    // 9. Wait for remote track
+    await trackPromise;
+
+    // 10. Wait for subscriber ICE connected
+    await waitIceConnected(subPC, "subscriber");
+    log("Subscriber connected — media flowing from SFU");
+    log("=== Echo test running ===");
+
+    // 11. Start stats polling
+    startStatsPolling();
+
+  } catch (err) {
+    log("ERROR: " + err.message);
+    console.error(err);
+    els.startBtn.disabled = false;
+    await teardown();
+  }
+}
+
+// ===========================================================================
+// Remote video events
+// ===========================================================================
+els.remoteVideo.addEventListener("loadedmetadata", () => {
+  setDiag("remote.dimensions", `${els.remoteVideo.videoWidth}x${els.remoteVideo.videoHeight}`);
+  log(`Remote metadata: ${els.remoteVideo.videoWidth}x${els.remoteVideo.videoHeight}`);
+});
+
+els.remoteVideo.addEventListener("playing", () => {
+  if (!playStartTime) {
+    playStartTime = Date.now();
+    setDiag("remote.playing", "true");
+    log(">>> Remote video PLAYING <<<");
+  }
+});
+
+els.remoteVideo.addEventListener("stalled", () => { setDiag("remote.stalled", "true"); log("Remote video stalled"); });
+els.remoteVideo.addEventListener("pause", () => { setDiag("remote.paused", "true"); });
+
+// ===========================================================================
+// Stats polling (every 2s)
+// ===========================================================================
+function startStatsPolling() {
+  statsIntervalId = setInterval(async () => {
+    if (playStartTime) {
+      const up = Math.floor((Date.now() - playStartTime) / 1000);
+      setDiag("remote.uptime", `${up}s (${(up / 60).toFixed(1)}m)`);
+    }
+    if (!subPC) return;
+    try {
+      const stats = await subPC.getStats();
+      stats.forEach((r) => {
+        if (r.type === "inbound-rtp" && r.kind === "video") {
+          setDiag("stats.framesDecoded", r.framesDecoded ?? "n/a");
+          if (r.framesPerSecond != null) setDiag("stats.framesPerSecond", r.framesPerSecond.toFixed(1));
+          setDiag("stats.packetsLost", r.packetsLost ?? "n/a");
+          if (r.jitter != null) setDiag("stats.jitter", `${r.jitter.toFixed(4)}s`);
+          setDiag("stats.bytesReceived", r.bytesReceived ?? "n/a");
+          if (r.nackCount != null) setDiag("stats.nackCount", r.nackCount);
+          setDiag("stats.codec", r.codecId ?? "n/a");
+        }
+        if (r.type === "remote-inbound-rtp" && r.kind === "video") {
+          if (r.roundTripTime != null) setDiag("stats.rtt", `${(r.roundTripTime * 1000).toFixed(0)}ms`);
+        }
+      });
+    } catch (e) {
+      setDiag("stats.error", e.message);
+    }
+  }, 2000);
+}
+
+// ===========================================================================
+// Teardown
+// ===========================================================================
+els.stopBtn.addEventListener("click", teardown);
+
+async function teardown() {
+  log("=== Tearing down ===");
+  els.stopBtn.disabled = true;
+  setBadge(els.pubBadge, "idle", "idle");
+  setBadge(els.subBadge, "idle", "idle");
+
+  if (statsIntervalId) { clearInterval(statsIntervalId); statsIntervalId = null; }
+
+  // Best-effort SFU cleanup — send specific track mids with force:true to skip renegotiation.
+  const closeTargets = [
+    { label: "publisher", sessionId: pubSessionId, tracks: pubCloseTracks },
+    { label: "subscriber", sessionId: subSessionId, tracks: subCloseTracks },
+  ];
+  for (const { label, sessionId, tracks } of closeTargets) {
+    if (!sessionId || tracks.length === 0) continue;
+    try {
+      const resp = await api(`/api/sessions/${sessionId}/tracks/close`, {
+        method: "PUT",
+        body: JSON.stringify({ tracks, force: true }),
+      });
+      const body = await resp.text();
+      let parsed;
+      try { parsed = JSON.parse(body); } catch { parsed = { raw: body }; }
+      if (parsed.requiresImmediateRenegotiation) {
+        log(`[${label}] close requested renegotiation (type=${parsed.sessionDescription?.type || "n/a"}) — not blocking for POC`);
+      } else {
+        log(`[${label}] tracks closed (mids: ${tracks.map((t) => t.mid).join(",")})`);
+      }
+    } catch (e) {
+      log(`[${label}] best-effort close failed (non-blocking): ${e.message}`);
+    }
+  }
+
+  if (subPC) { try { subPC.close(); } catch {} subPC = null; }
+  if (pubPC) { try { pubPC.close(); } catch {} pubPC = null; }
+
+  stopCanvasAnim();
+
+  if (cameraStream) { cameraStream.getTracks().forEach((t) => t.stop()); cameraStream = null; }
+
+  if (els.remoteVideo.srcObject) {
+    els.remoteVideo.srcObject.getTracks().forEach((t) => t.stop());
+    els.remoteVideo.srcObject = null;
+  }
+
+  pubSessionId = null;
+  subSessionId = null;
+  pubCloseTracks = [];
+  subCloseTracks = [];
+  playStartTime = null;
+  els.startBtn.disabled = false;
+  log("=== Teardown complete ===");
+}
+
+// ===========================================================================
+// Init
+// ===========================================================================
+log("Page loaded. Enter POC token and click Check Config.");
+setDiag("browser.userAgent", navigator.userAgent.substr(0, 60));
+</script>
+
+</body>
+</html>

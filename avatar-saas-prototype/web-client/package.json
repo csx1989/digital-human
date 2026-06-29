@@ -1,0 +1,16 @@
+{
+  "name": "avatar-web-client",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "npx esbuild src/main.ts --bundle --outfile=dist/app.js --sourcemap --watch --format=iife --target=es2022",
+    "build": "npx esbuild src/main.ts --bundle --outfile=dist/app.js --minify --format=iife --target=es2022 && npx esbuild src/audio-worklet.ts --bundle --outfile=dist/audio-worklet.js --minify --format=iife --target=es2022 && cp index.html dist/ && cp src/styles.css dist/ && cp -r assets/ dist/assets/",
+    "typecheck": "tsc --noEmit",
+    "preview": "npx wrangler pages dev dist --port 8788",
+    "deploy": "npm run build && npx wrangler pages deploy dist --project-name=avatar-web-client"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "typescript": "^5.8.0"
+  }
+}

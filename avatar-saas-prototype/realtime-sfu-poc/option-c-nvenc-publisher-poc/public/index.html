@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AVTR Option C — NVENC SFU Subscriber</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #0d1117;
+      --fg: #c9d1d9;
+      --accent: #58a6ff;
+      --border: #30363d;
+      --panel: #161b22;
+      --ok: #3fb950;
+      --err: #f85149;
+      --warn: #d29922;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      margin: 0;
+      padding: 1.5rem;
+      max-width: 1200px;
+    }
+    h1 { font-size: 1.4rem; font-weight: 600; margin: 0 0 0.25rem; }
+    h2 { font-size: 1rem; font-weight: 600; margin: 1.5rem 0 0.5rem; color: var(--accent); }
+    .subtitle { color: #8b949e; font-size: 0.85rem; margin-bottom: 1rem; }
+    .config-bar {
+      display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1rem;
+    }
+    .config-bar label { font-size: 0.85rem; }
+    input[type="password"], input[type="text"] {
+      background: var(--bg); border: 1px solid var(--border); color: var(--fg);
+      border-radius: 4px; padding: 0.35rem 0.5rem;
+      font-family: monospace; font-size: 0.85rem;
+    }
+    input[type="password"] { width: 240px; }
+    input[type="text"] { width: 200px; }
+    button {
+      background: #21262d; border: 1px solid var(--border); color: var(--fg);
+      border-radius: 6px; padding: 0.4rem 1rem; font-size: 0.85rem;
+      cursor: pointer; transition: background 0.15s;
+    }
+    button:hover:not(:disabled) { background: #30363d; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    button.primary { background: #1f6feb; border-color: #1f6feb; }
+    button.primary:hover:not(:disabled) { background: #388bfd; }
+    button.danger { background: #da3633; border-color: #da3633; }
+    .status-ok { color: var(--ok); }
+    .status-err { color: var(--err); }
+    .video-panel {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 8px; overflow: hidden; margin-bottom: 1rem;
+    }
+    .video-panel .label {
+      padding: 0.4rem 0.75rem; font-size: 0.75rem; color: #8b949e;
+      border-bottom: 1px solid var(--border);
+    }
+    video { width: 100%; display: block; background: #000; aspect-ratio: 16 / 9; }
+    .diag-panel {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 8px; padding: 1rem;
+    }
+    #diagOutput {
+      font-family: "SF Mono", Monaco, monospace; font-size: 0.8rem;
+      line-height: 1.5; white-space: pre-wrap; margin: 0;
+      max-height: 400px; overflow-y: auto;
+    }
+    .badge {
+      display: inline-block; padding: 1px 6px; border-radius: 3px;
+      font-size: 0.7rem; font-weight: 600;
+    }
+    .badge-idle { background: #21262d; color: #8b949e; }
+    .badge-ok { background: #1a3d2e; color: var(--ok); }
+    .badge-err { background: #3d1a1d; color: var(--err); }
+  </style>
+</head>
+<body>
+
+  <h1>Option C — NVENC SFU Subscriber</h1>
+  <p class="subtitle">
+    GStreamer NVENC Publisher &rarr; Cloudflare SFU &rarr; Browser Subscriber
+  </p>
+
+  <div class="config-bar">
+    <label>POC Token:</label>
+    <input type="password" id="pocToken" placeholder="paste POC_ACCESS_TOKEN" autocomplete="off">
+    <label>Publisher Session:</label>
+    <input type="text" id="pubSession" placeholder="publisher session ID" readonly>
+    <label>Track Name:</label>
+    <input type="text" id="trackName" placeholder="track name" readonly>
+    <button id="checkBtn">Check Config</button>
+    <span id="configStatus"></span>
+  </div>
+
+  <div style="display:flex;gap:0.5rem;margin-bottom:1rem;">
+    <button id="startBtn" class="primary" disabled>Subscribe</button>
+    <button id="stopBtn" class="danger" disabled>Disconnect</button>
+    <span class="badge badge-idle" id="subBadge">idle</span>
+  </div>
+
+  <div class="video-panel">
+    <div class="label">Remote — SFU Subscriber Stream</div>
+    <video id="remoteVideo" autoplay muted playsinline></video>
+  </div>
+
+  <div class="diag-panel">
+    <h2 style="margin-top:0">Diagnostics</h2>
+    <pre id="diagOutput"></pre>
+  </div>
+
+<script>
+"use strict";
+
+let subPC = null;
+let subSessionId = null;
+let subCloseTracks = [];
+let statsIntervalId = null;
+let playStartTime = null;
+
+const diag = {};
+const els = {
+  pocToken:    document.getElementById("pocToken"),
+  pubSession:  document.getElementById("pubSession"),
+  trackName:   document.getElementById("trackName"),
+  checkBtn:    document.getElementById("checkBtn"),
+  configStatus:document.getElementById("configStatus"),
+  startBtn:    document.getElementById("startBtn"),
+  stopBtn:     document.getElementById("stopBtn"),
+  remoteVideo: document.getElementById("remoteVideo"),
+  diagOutput:  document.getElementById("diagOutput"),
+  subBadge:    document.getElementById("subBadge"),
+};
+
+// --- Read URL params ---
+const params = new URLSearchParams(location.search);
+const urlToken = params.get("token");
+const urlPubSession = params.get("pubSession");
+const urlTrackName = params.get("trackName");
+if (urlToken) els.pocToken.value = urlToken;
+if (urlPubSession) els.pubSession.value = urlPubSession;
+if (urlTrackName) els.trackName.value = urlTrackName;
+
+function pocToken() { return els.pocToken.value.trim(); }
+
+// --- API helpers ---
+async function api(path, opts = {}) {
+  return fetch(path, {
+    ...opts,
+    headers: { "content-type": "application/json", "x-poc-token": pocToken(), ...(opts.headers || {}) },
+  });
+}
+async function apiJson(path, opts = {}) {
+  const resp = await api(path, opts);
+  const text = await resp.text();
+  let body;
+  try { body = JSON.parse(text); } catch { body = { raw: text }; }
+  if (!resp.ok) throw new Error(`${path} → ${resp.status}: ${JSON.stringify(body)}`);
+  return body;
+}
+
+// --- Diagnostics ---
+function setDiag(key, val) { diag[key] = val; renderDiag(); }
+function renderDiag() {
+  els.diagOutput.textContent = Object.keys(diag).sort().map(k => `${k}: ${diag[k]}`).join("\n");
+}
+function setBadge(el, state, text) {
+  el.className = "badge " + (state === "ok" ? "badge-ok" : state === "err" ? "badge-err" : "badge-idle");
+  el.textContent = text;
+}
+function log(msg) {
+  const ts = new Date().toLocaleTimeString();
+  console.log(`[${ts}] ${msg}`);
+  setDiag("log.last", msg);
+}
+
+// --- PeerConnection ---
+function createPC() {
+  const pc = new RTCPeerConnection({
+    iceServers: [{ urls: "stun:stun.cloudflare.com:3478" }],
+    bundlePolicy: "max-bundle",
+  });
+  pc.addEventListener("iceconnectionstatechange", () => {
+    setDiag("subscriber.iceState", pc.iceConnectionState);
+    setBadge(els.subBadge, pc.iceConnectionState === "connected" ? "ok" : pc.iceConnectionState === "failed" ? "err" : "idle", pc.iceConnectionState);
+  });
+  pc.addEventListener("connectionstatechange", () => setDiag("subscriber.connState", pc.connectionState));
+  return pc;
+}
+
+function waitIceGathering(pc, ms = 3000) {
+  return new Promise(resolve => {
+    if (pc.iceGatheringState === "complete") return resolve();
+    let done = false;
+    const finish = () => { if (!done) { done = true; pc.removeEventListener("icegatheringstatechange", c); resolve(); } };
+    const c = () => { if (pc.iceGatheringState === "complete") finish(); };
+    pc.addEventListener("icegatheringstatechange", c);
+    setTimeout(finish, ms);
+  });
+}
+
+// --- Check config ---
+els.checkBtn.addEventListener("click", async () => {
+  els.configStatus.textContent = "Checking...";
+  els.configStatus.className = "";
+  els.startBtn.disabled = true;
+  try {
+    const r = await apiJson("/api/health");
+    if (r.configured) {
+      els.configStatus.textContent = "\u2713 SFU configured — ready";
+      els.configStatus.className = "status-ok";
+      els.startBtn.disabled = false;
+    } else {
+      els.configStatus.textContent = "\u2717 SFU not configured";
+      els.configStatus.className = "status-err";
+    }
+  } catch (e) {
+    els.configStatus.textContent = "\u2717 " + e.message;
+    els.configStatus.className = "status-err";
+  }
+});
+
+// --- Start subscription ---
+els.startBtn.addEventListener("click", startSubscription);
+
+async function startSubscription() {
+  const pubSession = els.pubSession.value.trim();
+  const trackNameVal = els.trackName.value.trim();
+  if (!pubSession || !trackNameVal) {
+    log("ERROR: Publisher session and track name are required.");
+    return;
+  }
+
+  els.startBtn.disabled = true;
+  els.stopBtn.disabled = false;
+  setBadge(els.subBadge, "idle", "connecting");
+  log("=== Starting subscription ===");
+  setDiag("publisher.session", pubSession);
+  setDiag("publisher.trackName", trackNameVal);
+
+  try {
+    // 1. Create subscriber session
+    const subSess = await apiJson("/api/sessions/new", { method: "POST" });
+    subSessionId = subSess.sessionId;
+    log(`Subscriber session: ${subSessionId}`);
+    setDiag("session.subscriber", subSessionId);
+
+    // 2. Subscriber PC
+    subPC = createPC();
+    const remoteStream = new MediaStream();
+    els.remoteVideo.srcObject = remoteStream;
+
+    const trackPromise = new Promise((resolve, reject) => {
+      const to = setTimeout(() => reject(new Error("Timed out waiting for remote track (15s)")), 15000);
+      subPC.addEventListener("track", (ev) => {
+        clearTimeout(to);
+        log(`Remote track received: ${ev.track.kind} id=${ev.track.id}`);
+        remoteStream.addTrack(ev.track);
+        resolve(ev.track);
+      });
+    });
+
+    // 3. Subscribe to publisher's track
+    const subResp = await apiJson(`/api/sessions/${subSessionId}/tracks/new`, {
+      method: "POST",
+      body: JSON.stringify({
+        tracks: [{ location: "remote", sessionId: pubSession, trackName: trackNameVal }],
+      }),
+    });
+
+    subCloseTracks = (subResp.tracks || []).map(t => ({ mid: t.mid }));
+    setDiag("track.subCloseMids", subCloseTracks.map(t => t.mid).join(","));
+    log(`Subscriber offer from SFU (renegotiation: ${subResp.requiresImmediateRenegotiation}). closeMids: [${subCloseTracks.map(t => t.mid).join(", ")}]`);
+
+    // 4. Renegotiate — SFU sent an offer, browser answers
+    if (subResp.requiresImmediateRenegotiation) {
+      await subPC.setRemoteDescription(new RTCSessionDescription(subResp.sessionDescription));
+      await subPC.setLocalDescription(await subPC.createAnswer());
+      await waitIceGathering(subPC);
+
+      await apiJson(`/api/sessions/${subSessionId}/renegotiate`, {
+        method: "PUT",
+        body: JSON.stringify({ sessionDescription: { sdp: subPC.localDescription.sdp, type: "answer" } }),
+      });
+      log("Renegotiation complete");
+    }
+
+    // 5. Wait for remote track
+    await trackPromise;
+
+    // 6. Wait for subscriber ICE connected
+    await new Promise((resolve, reject) => {
+      if (["connected", "completed"].includes(subPC.iceConnectionState)) return resolve();
+      const to = setTimeout(() => { subPC.removeEventListener("iceconnectionstatechange", c); reject(new Error(`Subscriber ICE timeout (30s). State: ${subPC.iceConnectionState}`)); }, 30000);
+      const c = () => {
+        const s = subPC.iceConnectionState;
+        if (["connected", "completed"].includes(s)) { clearTimeout(to); subPC.removeEventListener("iceconnectionstatechange", c); resolve(); }
+        else if (s === "failed") { clearTimeout(to); subPC.removeEventListener("iceconnectionstatechange", c); reject(new Error("Subscriber ICE failed")); }
+      };
+      subPC.addEventListener("iceconnectionstatechange", c);
+    });
+
+    log("Subscriber connected — media flowing from SFU");
+    log("=== Subscription running ===");
+    startStatsPolling();
+
+  } catch (err) {
+    log("ERROR: " + err.message);
+    console.error(err);
+    els.startBtn.disabled = false;
+    await teardown();
+  }
+}
+
+// --- Video events ---
+els.remoteVideo.addEventListener("loadedmetadata", () => {
+  setDiag("remote.dimensions", `${els.remoteVideo.videoWidth}x${els.remoteVideo.videoHeight}`);
+  log(`Remote metadata: ${els.remoteVideo.videoWidth}x${els.remoteVideo.videoHeight}`);
+});
+els.remoteVideo.addEventListener("playing", () => {
+  if (!playStartTime) {
+    playStartTime = Date.now();
+    setDiag("remote.playing", "true");
+    log(">>> Remote video PLAYING <<<");
+  }
+});
+
+// --- Stats ---
+function startStatsPolling() {
+  statsIntervalId = setInterval(async () => {
+    if (playStartTime) {
+      const up = Math.floor((Date.now() - playStartTime) / 1000);
+      setDiag("remote.uptime", `${up}s (${(up / 60).toFixed(1)}m)`);
+    }
+    if (!subPC) return;
+    try {
+      const stats = await subPC.getStats();
+      let codecName = "n/a";
+      stats.forEach(r => {
+        if (r.type === "codec" && r.mimeType) {
+          codecName = r.mimeType;
+          setDiag("stats.codecMime", r.mimeType);
+        }
+      });
+      stats.forEach(r => {
+        if (r.type === "inbound-rtp" && r.kind === "video") {
+          setDiag("stats.framesDecoded", r.framesDecoded ?? "n/a");
+          if (r.framesPerSecond != null) setDiag("stats.framesPerSecond", r.framesPerSecond.toFixed(1));
+          setDiag("stats.packetsLost", r.packetsLost ?? "n/a");
+          if (r.jitter != null) setDiag("stats.jitter", `${r.jitter.toFixed(4)}s`);
+          setDiag("stats.bytesReceived", r.bytesReceived ?? "n/a");
+          if (r.nackCount != null) setDiag("stats.nackCount", r.nackCount);
+          setDiag("stats.codecId", r.codecId ?? "n/a");
+          setDiag("stats.codecNegotiated", codecName);
+        }
+      });
+    } catch (e) { setDiag("stats.error", e.message); }
+  }, 2000);
+}
+
+// --- Teardown ---
+els.stopBtn.addEventListener("click", teardown);
+
+async function teardown() {
+  log("=== Tearing down ===");
+  els.stopBtn.disabled = true;
+  setBadge(els.subBadge, "idle", "idle");
+  if (statsIntervalId) { clearInterval(statsIntervalId); statsIntervalId = null; }
+
+  if (subSessionId && subCloseTracks.length > 0) {
+    try {
+      const resp = await api(`/api/sessions/${subSessionId}/tracks/close`, {
+        method: "PUT",
+        body: JSON.stringify({ tracks: subCloseTracks, force: true }),
+      });
+      const body = await resp.text();
+      let parsed;
+      try { parsed = JSON.parse(body); } catch { parsed = { raw: body }; }
+      log(`[subscriber] tracks closed (mids: ${subCloseTracks.map(t => t.mid).join(",")})`);
+    } catch (e) {
+      log(`[subscriber] best-effort close failed: ${e.message}`);
+    }
+  }
+
+  if (subPC) { try { subPC.close(); } catch {} subPC = null; }
+  if (els.remoteVideo.srcObject) {
+    els.remoteVideo.srcObject.getTracks().forEach(t => t.stop());
+    els.remoteVideo.srcObject = null;
+  }
+  subSessionId = null;
+  subCloseTracks = [];
+  playStartTime = null;
+  els.startBtn.disabled = false;
+  log("=== Teardown complete ===");
+}
+
+// --- Init ---
+log("Page loaded. Enter POC token and click Check Config.");
+setDiag("browser.userAgent", navigator.userAgent.substr(0, 60));
+
+// Auto-check config if token was provided via URL
+if (urlToken) {
+  setTimeout(() => els.checkBtn.click(), 500);
+}
+// Auto-start if all params provided via URL
+if (urlToken && urlPubSession && urlTrackName) {
+  setTimeout(async () => {
+    try {
+      await new Promise(r => setTimeout(r, 1500));
+      if (!els.startBtn.disabled) els.startBtn.click();
+    } catch {}
+  }, 2000);
+}
+</script>
+
+</body>
+</html>

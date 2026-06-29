@@ -1,0 +1,1354 @@
+openapi: 3.0.3
+info:
+  title: Avatar API v1
+  version: 1.0.0
+  description: |
+    Stable public API for avatar session management.
+
+    All `/v1/*` routes require an API key. Responses use a canonical
+    envelope: `{ success, data, timings }` on success or
+    `{ success: false, error: { code, message }, timings }` on failure.
+
+    Modal is an internal rendering provider. No Modal endpoint names,
+    session ids, or provider concepts appear in public responses.
+  contact:
+    name: Avtr-1 Platform
+servers:
+  - url: https://avatar-session-bridge.vallangirakesh.workers.dev
+    description: Production
+
+# ── Security ──────────────────────────────────────────────────────────────
+security:
+  - BearerAuth: []
+  - ApiKeyHeader: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: "Authorization: Bearer <api_key>"
+    ApiKeyHeader:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: "x-api-key: <api_key>"
+
+  # ── Reusable parameters ────────────────────────────────────────────────
+  parameters:
+    SessionId:
+      name: session_id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^session:"
+      description: Session identifier (starts with `session:`).
+    RequestId:
+      name: X-Request-Id
+      in: header
+      required: false
+      schema:
+        type: string
+        pattern: '^[a-zA-Z0-9_-]{1,128}$'
+      description: Optional client-provided request correlation ID. Echoed in response header and body.
+
+  # ── Schemas ────────────────────────────────────────────────────────────
+  schemas:
+
+    ApiTimings:
+      type: object
+      required: [latency_ms]
+      properties:
+        latency_ms:
+          type: integer
+          format: int64
+          description: Server-side latency in milliseconds.
+        request_id:
+          type: string
+          pattern: '^[a-zA-Z0-9_-]{1,128}$'
+          description: Request correlation ID (echoed or server-generated UUID).
+
+    ApiErrorBody:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Machine-readable error code.
+          enum:
+            - missing_api_key
+            - invalid_api_key
+            - api_auth_not_configured
+            - invalid_session_id
+            - method_not_allowed
+            - invalid_body
+            - not_found
+            - internal_error
+            - session_not_started
+            - session_conflict
+            - session_starting
+            - session_cancelled
+            - modal_start_failed
+            - modal_unreachable
+            - no_modal_protocol_enabled
+            - ws_token_missing
+            - ws_token_invalid
+            - ws_token_secret_not_configured
+            - rate_limited
+            - avatar_not_found
+            - background_not_found
+            - sfu_unavailable
+            - sfu_not_configured
+            - sfu_beta_not_enabled
+            - sfu_session_not_found
+            - sfu_wrong_transport
+            - sfu_turn_credentials_unavailable
+            - sfu_capacity_exceeded
+            - sfu_capacity_unavailable
+        message:
+          type: string
+          description: Human-readable error message.
+
+    ApiFailure:
+      type: object
+      required: [success, error, timings]
+      properties:
+        success:
+          type: boolean
+          enum: [false]
+        error:
+          $ref: "#/components/schemas/ApiErrorBody"
+        timings:
+          $ref: "#/components/schemas/ApiTimings"
+
+    V1SessionStatus:
+      type: string
+      enum: [created, ready, active, ended]
+
+    V1Stream:
+      type: object
+      required: [transport, ws_url, status_url]
+      properties:
+        transport:
+          type: string
+          enum: [websocket_fmp4, webrtc_sfu]
+          description: |
+            Active transport for this session. On session creation this is
+            always `websocket_fmp4` — the transport is resolved at
+            `POST /start` or WS `session.start` time. After start, reflects
+            the negotiated transport.
+        ws_url:
+          type: string
+          format: uri
+          description: |
+            WebSocket URL for fMP4 media delivery. On session creation, includes
+            a signed short-lived token as a query parameter. On other responses,
+            points to the same WS path without a token — use the token from
+            session creation or POST /v1/sessions/:id/ws-token.
+        status_url:
+          type: string
+          format: uri
+          description: REST URL for session status polling.
+        token_expires_at:
+          type: integer
+          format: int64
+          nullable: true
+          description: Unix epoch milliseconds when the WS token expires. Present on session creation and token refresh; absent on other responses.
+        available_transports:
+          type: array
+          items:
+            type: string
+            enum: [websocket_fmp4, webrtc_sfu]
+          description: |
+            Transports the server can serve for this session. Always includes
+            `websocket_fmp4`. Includes `webrtc_sfu` only when the SFU is fully
+            configured (AVTR_REALTIME_SFU_ENABLED, Cloudflare Calls credentials,
+            Modal worker secret, Worker base URL). Absent if only fMP4 is
+            available (equivalent to `["websocket_fmp4"]`).
+        sfu:
+          $ref: "#/components/schemas/V1StreamSfu"
+
+    V1StreamSfu:
+      type: object
+      required: [subscribe_url, answer_url, close_url, token, token_expires_at, track_names]
+      description: |
+        SFU connection details. Present in `stream.sfu` only when the SFU
+        transport is fully configured on the server. The `token` is a separate
+        purpose-scoped SFU token (`purpose: "sfu"`) — distinct from the
+        `ws_url` token (`purpose: "ws"`). Use this token for
+        `POST /v1/sessions/:id/sfu/*` endpoints.
+      properties:
+        subscribe_url:
+          type: string
+          format: uri
+          description: SFU subscriber endpoint — initiates track subscription.
+        answer_url:
+          type: string
+          format: uri
+          description: SFU answer endpoint — sends the browser's SDP answer.
+        close_url:
+          type: string
+          format: uri
+          description: SFU close endpoint — tears down the subscriber track.
+        token:
+          type: string
+          description: |
+            HMAC-signed SFU session token (purpose "sfu"). Pass as
+            Authorization Bearer header or token query parameter.
+        token_expires_at:
+          type: integer
+          format: int64
+          description: Unix epoch milliseconds when the SFU token expires.
+        track_names:
+          type: array
+          items:
+            type: string
+          description: Publisher track names available for subscription (e.g. `["avatar-video"]`).
+
+    WsTokenResponse:
+      type: object
+      required: [ws_url, token_expires_at]
+      properties:
+        ws_url:
+          type: string
+          format: uri
+          description: WebSocket URL with a freshly minted token query parameter.
+        token_expires_at:
+          type: integer
+          format: int64
+          description: Unix epoch milliseconds when the token expires (5 minutes from now).
+        sfu_token:
+          type: string
+          nullable: true
+          description: Fresh SFU session token (purpose sfu). Present only when the SFU transport is fully configured.
+        sfu_token_expires_at:
+          type: integer
+          format: int64
+          nullable: true
+          description: Unix epoch milliseconds when the SFU token expires. Present only when `sfu_token` is present.
+
+    V1SessionEndSummary:
+      type: object
+      properties:
+        chunks_rendered:
+          type: integer
+        fmp4_media_count:
+          type: integer
+        fmp4_media_total_bytes:
+          type: integer
+        duration_s:
+          type: number
+        ffmpeg_rc:
+          type: integer
+          nullable: true
+
+    V1Session:
+      type: object
+      required: [session_id, avatar_id, bg_id, status, created_at, stream]
+      properties:
+        session_id:
+          type: string
+          pattern: "^session:"
+        avatar_id:
+          type: string
+          nullable: true
+        bg_id:
+          type: string
+          nullable: true
+        status:
+          $ref: "#/components/schemas/V1SessionStatus"
+        created_at:
+          type: integer
+          format: int64
+          nullable: true
+          description: Unix epoch milliseconds.
+        started_at:
+          type: integer
+          format: int64
+          nullable: true
+          description: Unix epoch milliseconds.
+        ended_at:
+          type: integer
+          format: int64
+          nullable: true
+          description: Unix epoch milliseconds.
+        stream:
+          $ref: "#/components/schemas/V1Stream"
+        end_ok:
+          type: boolean
+          description: Present on ended sessions.
+        end_summary:
+          $ref: "#/components/schemas/V1SessionEndSummary"
+
+    V1Health:
+      type: object
+      required: [status, version, transport]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        version:
+          type: string
+        transport:
+          type: string
+          enum: [websocket_fmp4]
+
+    V1Avatar:
+      type: object
+      required: [avatar_id, display_name, available, default_bg_id]
+      properties:
+        avatar_id:
+          type: string
+        display_name:
+          type: string
+        available:
+          type: boolean
+        default_bg_id:
+          type: string
+        preview_url:
+          type: string
+          format: uri
+
+    V1Background:
+      type: object
+      required: [bg_id, display_name, available]
+      properties:
+        bg_id:
+          type: string
+        display_name:
+          type: string
+        available:
+          type: boolean
+        preview_url:
+          type: string
+          format: uri
+
+    AvatarList:
+      type: object
+      required: [avatars]
+      properties:
+        avatars:
+          type: array
+          items:
+            $ref: "#/components/schemas/V1Avatar"
+
+    BackgroundList:
+      type: object
+      required: [backgrounds]
+      properties:
+        backgrounds:
+          type: array
+          items:
+            $ref: "#/components/schemas/V1Background"
+
+    V1Providers:
+      type: object
+      required: [stt, llm, tts, avatar, vad, smart_turn]
+      properties:
+        stt:
+          type: object
+          required: [provider, model, language]
+          properties:
+            provider:
+              type: string
+              description: STT vendor identifier.
+            model:
+              type: string
+              nullable: true
+              description: STT model name from server config.
+            language:
+              type: string
+              nullable: true
+              description: Default language code, "unknown" if unset.
+        llm:
+          type: object
+          required: [provider, model]
+          properties:
+            provider:
+              type: string
+              description: LLM compatibility class.
+            model:
+              type: string
+              nullable: true
+              description: LLM model name from server config.
+        tts:
+          type: object
+          required: [provider_chain, omnivoice_enabled, same_gpu_parallel_enabled, gpu_target, fallback_enabled]
+          properties:
+            provider_chain:
+              type: string
+              description: Ordered fallback chain string.
+            omnivoice_enabled:
+              type: boolean
+              description: True only when OmniVoice L4 TTS is effectively wired.
+            same_gpu_parallel_enabled:
+              type: boolean
+              description: True only when same-GPU parallel TTS is effectively wired.
+            gpu_target:
+              type: string
+              nullable: true
+              description: GPU class for parallel TTS (l4, l40s, a10g). Null when disabled.
+            fallback_enabled:
+              type: boolean
+              description: Always true — Sarvam to MeloTTS fallback is intrinsic.
+        avatar:
+          type: object
+          required: [transport, render_backend]
+          properties:
+            transport:
+              type: string
+              enum: [websocket_fmp4]
+            render_backend:
+              type: string
+              enum: [managed_gpu_renderer]
+              description: Provider-neutral rendering backend identifier.
+        vad:
+          type: object
+          required: [enabled]
+          properties:
+            enabled:
+              type: boolean
+              description: Voice Activity Detection service bound.
+        smart_turn:
+          type: object
+          required: [enabled]
+          properties:
+            enabled:
+              type: boolean
+              description: Smart Turn detection service bound.
+
+    V1Me:
+      type: object
+      required: [tenant_id, key_name, plan, auth_mode]
+      properties:
+        tenant_id:
+          type: string
+          description: Tenant identifier from metadata, or "legacy" when no metadata configured.
+        key_name:
+          type: string
+          nullable: true
+          description: Human-readable key name from metadata, null in legacy mode.
+        plan:
+          type: string
+          nullable: true
+          description: Plan identifier from metadata, null in legacy mode.
+        auth_mode:
+          type: string
+          enum: [metadata, legacy]
+          description: 'metadata when key resolved via AVTR_API_KEY_METADATA_JSON, legacy otherwise.'
+
+    CreateSessionRequest:
+      type: object
+      properties:
+        avatar_id:
+          type: string
+          description: Optional pre-select avatar.
+        bg_id:
+          type: string
+          description: Optional pre-select background.
+        sfu_beta_token:
+          type: string
+          description: Short-lived HMAC-signed SFU private beta token. The server verifies and discards it; only an authorization flag is stored.
+
+    StartSessionRequest:
+      type: object
+      properties:
+        avatar_id:
+          type: string
+          description: Avatar to render. Defaults to "arnold" if omitted.
+        bg_id:
+          type: string
+          description: Background to use. Defaults to first available if omitted.
+        transport:
+          type: string
+          enum: [auto, webrtc_sfu, websocket_fmp4]
+          default: auto
+          description: |
+            Preferred transport for this session.
+
+            - `websocket_fmp4` — fMP4 over WebSocket (default production path).
+            - `webrtc_sfu` — Cloudflare Realtime SFU (WebRTC). Fails with
+              `sfu_not_configured` if the SFU is not fully configured, or
+              `sfu_unavailable` if the SFU start fails. Does NOT fall back to
+              fMP4.
+            - `auto` — Server picks the transport. Currently always resolves to
+              `websocket_fmp4` unless `AVTR_REALTIME_SFU_DEFAULT` is explicitly
+              set to `webrtc_sfu` on the server. Falls back to fMP4 if the SFU
+              fails.
+
+  # ── Reusable responses ─────────────────────────────────────────────────
+  responses:
+    Unauthorized:
+      description: API key missing.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiFailure"
+    Forbidden:
+      description: API key invalid.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiFailure"
+    AuthNotConfigured:
+      description: Neither AVTR_API_KEYS nor valid AVTR_API_KEY_METADATA_JSON entries are configured.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiFailure"
+    RateLimited:
+      description: |
+        Rate limit exceeded for the request category. Includes a `Retry-After`
+        header indicating the window duration (seconds).
+
+        Limits are per-tenant, per Cloudflare location. See API_V1.md Rate Limits.
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+          description: Seconds until the rate limit window resets.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiFailure"
+
+paths:
+
+  # ── Health ─────────────────────────────────────────────────────────────
+  /v1/health:
+    get:
+      summary: Authed API health check
+      tags: [System]
+      responses:
+        "200":
+          description: API is healthy.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data, timings]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    $ref: "#/components/schemas/V1Health"
+                  timings:
+                    $ref: "#/components/schemas/ApiTimings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/AuthNotConfigured"
+
+  # ── Avatars ────────────────────────────────────────────────────────────
+  /v1/avatars:
+    get:
+      summary: List renderable avatars
+      tags: [Catalog]
+      description: |
+        Returns avatars from a CatalogProvider. Currently a static list
+        (hardcoded `arnold`); can be overridden via AVTR_CATALOG_JSON.
+        See API_V1.md Catalog Architecture section.
+      responses:
+        "200":
+          description: Avatar catalog.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data, timings]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    $ref: "#/components/schemas/AvatarList"
+                  timings:
+                    $ref: "#/components/schemas/ApiTimings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/avatars/{avatar_id}:
+    get:
+      summary: Get avatar details
+      tags: [Catalog]
+      description: |
+        Returns a single avatar from the CatalogProvider. Returns 404
+        `avatar_not_found` if the ID is unknown or unavailable.
+      parameters:
+        - name: avatar_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Avatar identifier.
+      responses:
+        "200":
+          description: Avatar details.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data, timings]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [avatar]
+                    properties:
+                      avatar:
+                        $ref: "#/components/schemas/V1Avatar"
+                  timings:
+                    $ref: "#/components/schemas/ApiTimings"
+        "400":
+          description: Invalid avatar id.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Avatar not found or unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ── Backgrounds ────────────────────────────────────────────────────────
+  /v1/backgrounds:
+    get:
+      summary: List selectable backgrounds
+      tags: [Catalog]
+      description: |
+        Returns backgrounds from a CatalogProvider. Currently a static list
+        (hardcoded `aloe_window`); can be overridden via AVTR_CATALOG_JSON.
+      responses:
+        "200":
+          description: Background catalog.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data, timings]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    $ref: "#/components/schemas/BackgroundList"
+                  timings:
+                    $ref: "#/components/schemas/ApiTimings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/backgrounds/{bg_id}:
+    get:
+      summary: Get background details
+      tags: [Catalog]
+      description: |
+        Returns a single background from the CatalogProvider. Returns 404
+        `background_not_found` if the ID is unknown or unavailable.
+      parameters:
+        - name: bg_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Background identifier.
+      responses:
+        "200":
+          description: Background details.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data, timings]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    type: object
+                    required: [background]
+                    properties:
+                      background:
+                        $ref: "#/components/schemas/V1Background"
+                  timings:
+                    $ref: "#/components/schemas/ApiTimings"
+        "400":
+          description: Invalid background id.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Background not found or unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ── Providers ───────────────────────────────────────────────────────────
+  /v1/providers:
+    get:
+      summary: List provider capabilities
+      tags: [System]
+      description: |
+        Returns safe, public identifiers for each configured platform layer
+        (STT, LLM, TTS, avatar rendering, VAD, Smart Turn). No API keys,
+        internal URLs, provider hostnames, or session/container IDs are
+        exposed. TTS booleans reflect effective availability, not raw env
+        flags.
+      responses:
+        "200":
+          description: Provider capabilities.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data, timings]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    $ref: "#/components/schemas/V1Providers"
+                  timings:
+                    $ref: "#/components/schemas/ApiTimings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/AuthNotConfigured"
+
+  /v1/me:
+    get:
+      summary: Get authenticated caller identity
+      tags: [System]
+      description: |
+        Returns the caller's tenant identity metadata. Keys configured via
+        AVTR_API_KEY_METADATA_JSON return auth_mode "metadata" with
+        tenant_id, key_name, and plan. Keys in AVTR_API_KEYS only return
+        auth_mode "legacy" with tenant_id "legacy" and null fields.
+      responses:
+        "200":
+          description: Caller identity.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data, timings]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    $ref: "#/components/schemas/V1Me"
+                  timings:
+                    $ref: "#/components/schemas/ApiTimings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/AuthNotConfigured"
+
+  # ── Session create ─────────────────────────────────────────────────────
+  /v1/sessions:
+    post:
+      summary: Create a session
+      tags: [Sessions]
+      description: |
+        Allocates a session id and returns connection URLs. The avatar is
+        selected at /start. Request body is optional.
+
+        The Cloudflare Realtime SFU transport (`webrtc_sfu`) is gated by a
+        private beta authorization mechanism. A session may be authorized via
+        per-API-key metadata, a tenant allowlist, or a short-lived HMAC-signed
+        `X-SFU-Beta-Token` header (or `sfu_beta_token` body field). When
+        authorized and SFU is fully configured, the response includes SFU
+        endpoints and lists `webrtc_sfu` in `available_transports`.
+      parameters:
+        - name: X-SFU-Beta-Token
+          in: header
+          required: false
+          schema:
+            type: string
+          description: Short-lived HMAC-signed SFU private beta token.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSessionRequest"
+      responses:
+        "200":
+          description: Session created (status = "created").
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data, timings]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    allOf:
+                      - $ref: "#/components/schemas/V1Session"
+                  timings:
+                    $ref: "#/components/schemas/ApiTimings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ── Session start ──────────────────────────────────────────────────────
+  /v1/sessions/{session_id}/start:
+    post:
+      summary: Start rendering for a session
+      tags: [Sessions]
+      description: |
+        Starts Modal-backed rendering. Optionally pre-select the avatar
+        and background. Re-calling with the same avatar is idempotent.
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartSessionRequest"
+      responses:
+        "200":
+          description: Session ready for media delivery (status = "ready").
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data, timings]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    $ref: "#/components/schemas/V1Session"
+                  timings:
+                    $ref: "#/components/schemas/ApiTimings"
+        "400":
+          description: Invalid session id, unknown avatar, or unknown background.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          description: Wrong HTTP method.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "409":
+          description: Session already active with a different avatar.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "500":
+          description: Rendering backend unreachable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "502":
+          description: Rendering backend rejected start.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "503":
+          description: No rendering protocol configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+
+  # ── Session status ─────────────────────────────────────────────────────
+  /v1/sessions/{session_id}/status:
+    get:
+      summary: Get session status
+      tags: [Sessions]
+      description: |
+        Returns the authoritative session state and timings. Use this for
+        the full timing picture (created_at, started_at, ended_at).
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Current session state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data, timings]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    $ref: "#/components/schemas/V1Session"
+                  timings:
+                    $ref: "#/components/schemas/ApiTimings"
+        "400":
+          description: Invalid session id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ── Session end (DELETE — canonical) ───────────────────────────────────
+  /v1/sessions/{session_id}:
+    delete:
+      summary: End session and release backend resources
+      tags: [Sessions]
+      description: |
+        Ends the session. Returns the final session state with end
+        metadata (end_ok, end_summary).
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Session ended.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data, timings]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    $ref: "#/components/schemas/V1Session"
+                  timings:
+                    $ref: "#/components/schemas/ApiTimings"
+        "400":
+          description: Invalid session id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ── Session end (POST alias) ───────────────────────────────────────────
+  /v1/sessions/{session_id}/end:
+    post:
+      summary: End session (compatibility alias)
+      tags: [Sessions]
+      description: |
+        Same as `DELETE /v1/sessions/{session_id}`. Kept for backward
+        compatibility.
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Session ended.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data, timings]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    $ref: "#/components/schemas/V1Session"
+                  timings:
+                    $ref: "#/components/schemas/ApiTimings"
+        "400":
+          description: Invalid session id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ── Session stream (SSE — raw, not JSON-wrapped) ───────────────────────
+  /v1/sessions/{session_id}/stream:
+    get:
+      summary: SSE fMP4 media stream
+      tags: [Sessions]
+      description: |
+        Server-Sent Events stream emitting fragmented MP4 init and media
+        segments. This response is returned **raw** — it is NOT wrapped
+        in the JSON `{ success, data, timings }` envelope. Connect using
+        an SSE-compatible client.
+
+        Returns HTTP 409 with a JSON error envelope if the session has
+        not been started yet.
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: SSE stream of fMP4 segments.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: Raw SSE stream (not JSON-wrapped).
+              example: |
+                event: fmp4_init
+                data: {"dataBase64":"AAAAGGZ0...","byteLength":1024}
+
+                event: fmp4_media
+                data: {"dataBase64":"AAAAM4Z0...","byteLength":4096,"sequence":1,"mode":"idle"}
+
+                event: end
+                data: {"chunksRendered":128,"duration_s":60.0}
+        "400":
+          description: Invalid session id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Session not started yet.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+
+  # ── WebSocket token refresh ────────────────────────────────────────────
+  /v1/sessions/{session_id}/ws-token:
+    post:
+      summary: Mint a fresh WebSocket session token
+      tags: [Sessions]
+      description: |
+        Generates a new short-lived (5-minute) HMAC-signed WebSocket token for
+        an existing session. Use this for reconnects, delayed connections, or
+        browser sleep recovery. Requires normal /v1/ API key authentication.
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Fresh token minted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data, timings]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+                  data:
+                    $ref: "#/components/schemas/WsTokenResponse"
+                  timings:
+                    $ref: "#/components/schemas/ApiTimings"
+        "400":
+          description: Invalid session id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: AVTR_SESSION_TOKEN_SECRET not configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+
+  # ── SFU subscriber endpoints (browser-facing, sfu_token auth) ───────────
+  # These endpoints are authenticated via the sfu_token (purpose "sfu")
+  # obtained at session creation or ws-token refresh — NOT the API key.
+  # The token is passed as ?token= or Authorization: Bearer.
+  /v1/sessions/{session_id}/sfu/subscribe:
+    post:
+      summary: Subscribe to the SFU publisher track
+      tags: [Sessions]
+      description: |
+        Creates a new SFU subscriber session and subscribes to the session's
+        publisher video track. The SFU returns an offer SDP that the browser
+        must answer via `POST /sfu/answer`.
+
+        **Authentication:** SFU session token (`sfu_token`, purpose `"sfu"`)
+        from `stream.sfu.token` — passed as `?token=` or
+        `Authorization: Bearer`. NOT the API key.
+
+        Requires `transport: "webrtc_sfu"` to have been set at session start.
+        Rate limited: 5 requests / 60s.
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+          description: SFU session token (purpose sfu). Alternatively pass as Authorization Bearer header.
+      responses:
+        "200":
+          description: SFU subscriber offer SDP.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  offer_sdp:
+                    type: string
+                    description: SFU-generated offer SDP for the browser to answer.
+                  offer_type:
+                    type: string
+                    enum: [offer]
+                  requires_renegotiation:
+                    type: boolean
+                    description: Always `true` — the browser must call `/sfu/answer` next.
+                  mids:
+                    type: array
+                    items:
+                      type: string
+                    description: Subscriber track MIDs to close later via `/sfu/close`.
+        "401":
+          description: SFU token missing or invalid.
+        "404":
+          description: Session not found or ownership mismatch.
+        "409":
+          description: Session is not using SFU transport, or publisher track not ready.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "429":
+          description: Rate limit exceeded (5/60s).
+        "502":
+          description: SFU API call failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+
+  /v1/sessions/{session_id}/sfu/answer:
+    post:
+      summary: Send the browser SDP answer to the SFU
+      tags: [Sessions]
+      description: |
+        Completes the WebRTC negotiation by sending the browser's SDP answer
+        to the SFU. Call this after `POST /sfu/subscribe` and
+        `RTCPeerConnection.setLocalDescription(createAnswer())`.
+
+        **Authentication:** SFU session token (`sfu_token`). Rate limited:
+        120 requests / 60s.
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+          description: SFU session token (purpose sfu). Alternatively pass as Authorization Bearer header.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [answer_sdp]
+              properties:
+                answer_sdp:
+                  type: string
+                  description: Browser-generated SDP answer.
+                answer_type:
+                  type: string
+                  enum: [answer]
+                  default: answer
+                  description: SDP type. Defaults to `"answer"` if omitted.
+      responses:
+        "200":
+          description: Answer accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+        "400":
+          description: Missing `answer_sdp` or invalid JSON.
+        "401":
+          description: SFU token missing or invalid.
+        "404":
+          description: No active subscriber session.
+        "409":
+          description: Session is not using SFU transport.
+        "429":
+          description: Rate limit exceeded (120/60s).
+        "502":
+          description: SFU renegotiate call failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+
+  /v1/sessions/{session_id}/sfu/close:
+    post:
+      summary: Close the SFU subscriber track
+      tags: [Sessions]
+      description: |
+        Tears down the subscriber track on the SFU. Best-effort — safe to call
+        on disconnect. Clears subscriber state even if the SFU call fails.
+
+        **Authentication:** SFU session token (`sfu_token`). Not rate limited
+        (cleanup category).
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+          description: SFU session token (purpose sfu). Alternatively pass as Authorization Bearer header.
+      responses:
+        "200":
+          description: Subscriber track closed (or no active subscriber).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [closed, closed_best_effort, no_active_subscriber]
+                    description: |
+                      - `closed` — SFU tracks closed successfully.
+                      - `closed_best_effort` — SFU call failed but subscriber
+                        state was cleared.
+                      - `no_active_subscriber` — No subscriber session was
+                        active (idempotent no-op).
+        "401":
+          description: SFU token missing or invalid.
+        "404":
+          description: Session not found or ownership mismatch.
+
+  # ── Authenticated WebSocket upgrade (informational) ────────────────────
+  /v1/sessions/{session_id}/ws:
+    get:
+      summary: Authenticated WebSocket upgrade (token required)
+      tags: [Sessions]
+      description: |
+        WebSocket upgrade endpoint for the public API. A signed short-lived
+        token must be provided as `?token=...` query parameter. Tokens are
+        obtained from `POST /v1/sessions` or `POST /v1/sessions/:id/ws-token`.
+
+        This is a WebSocket upgrade endpoint, not a standard HTTP GET. The
+        `Upgrade: websocket` header is required for a successful handshake.
+
+        **Token validation:**
+        - HMAC-SHA256 signature verified with constant-time comparison.
+        - `exp` field checked against current time.
+        - `sid` field must match the session_id in the URL path.
+        - `purpose` field must be `"ws"`.
+
+        The legacy `GET /sessions/:id/ws` route (no `/v1/` prefix) is
+        demo-only, requires no token, and is not part of the public API
+        contract.
+
+        **Client warning:** Do not log, screenshot, or store `ws_url` in
+        browser history. The token is a bearer credential.
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+          description: HMAC-signed WebSocket session token.
+      responses:
+        "101":
+          description: WebSocket upgrade successful.
+        "400":
+          description: Invalid session id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "401":
+          description: Token missing, malformed, expired, or wrong session.
+        "429":
+          $ref: "#/components/responses/RateLimited"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+        "503":
+          description: AVTR_SESSION_TOKEN_SECRET not configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiFailure"
+
+tags:
+  - name: System
+    description: Health and platform endpoints.
+  - name: Catalog
+    description: Avatar and background catalogs.
+  - name: Sessions
+    description: Session lifecycle management.

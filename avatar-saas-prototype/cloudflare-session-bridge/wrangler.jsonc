@@ -1,0 +1,104 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "avatar-session-bridge",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-29",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "AVATAR_SESSION",
+        "class_name": "AvatarSessionDO"
+      },
+      {
+        "name": "SFU_CAPACITY_MANAGER",
+        "class_name": "SfuCapacityManager"
+      }
+    ]
+  },
+  "vars": {
+    "MODAL_LIFECYCLE_URL": "",
+    "POSTHOG_HOST": "https://eu.i.posthog.com",
+    "LLM_BASE_URL": "https://cerebras-router-worker.vallangirakesh.workers.dev/v1",
+    "LLM_MODEL": "gpt-oss-120b",
+    "ENABLE_LIVE_IDLE": "false",
+    "ENABLE_SPEECH_STREAMING": "true",
+    "ENABLE_AVATAR_TIMELINE": "true",
+    "ENABLE_MODAL_PERSISTENT_TIMELINE": "true",
+    "ENABLE_MODAL_FMP4_VIDEO_STREAM": "false",
+    // WS-path only. REST/4C path gates on MODAL_SESSION_STREAM_FMP4_AV_URL instead.
+    "ENABLE_MODAL_FMP4_AV_STREAM": "false",
+    "MODAL_TIMELINE_CONTROL_URL": "",
+    "ENABLE_OMNIVOICE_TTS_ON_L4": "false",
+    "OMNIVOICE_TTS_URL": "",
+    "ENABLE_OMNIVOICE_SAME_GPU_PARALLEL_TTS": "true",
+    "MODAL_PARALLEL_LIFECYCLE_URL": "",
+    "MODAL_PARALLEL_A10G_LIFECYCLE_URL": "",
+    "MODAL_PARALLEL_L40S_LIFECYCLE_URL": "https://kommathotichinnasubbayamma--tts-same-gpu-parallel-5q.modal.run",
+    "OMNIVOICE_SAME_GPU_PARALLEL_TARGET": "l40s",
+    "OMNIVOICE_SAME_GPU_PARALLEL_TIMEOUT_MS": "30000",
+    "ENABLE_VERBOSE_AV_DELIVERY_TELEMETRY": "false",
+    "FMP4_RELAY_PACE_MS": "200",
+    "MODAL_SESSION_START_URL": "https://kommathotichinnasubbayamma--start-session-5q.modal.run",
+    "MODAL_SESSION_PUSH_AUDIO_URL": "",
+    "MODAL_SESSION_PUSH_AUDIO_BATCH_URL": "https://kommathotichinnasubbayamma--push-audio-batch-5q.modal.run",
+    "MODAL_SESSION_STATUS_URL": "https://kommathotichinnasubbayamma--session-status-5q.modal.run",
+    "MODAL_SESSION_END_URL": "https://kommathotichinnasubbayamma--end-session-adapter-5q.modal.run",
+    "MODAL_SESSION_STREAM_FMP4_AV_URL": "https://kommathotichinnasubbayamma--stream-fmp4-av-adapter-5q.modal.run",
+    "ENABLE_LEGACY_MODAL_PROTOCOL": "false",
+    "FMP4_RELAY_MAX_QUEUE": "500",
+    "AVTR_REALTIME_SFU_ENABLED": "false",
+    "AVTR_REALTIME_SFU_DEFAULT": "websocket_fmp4",
+    "AVTR_SFU_KEEPALIVE_MAX_AGE_MS": "120000",
+    "AVTR_SFU_SESSION_MAX_AGE_MS": "120000",
+    "AVTR_SFU_KEEPALIVE_MAX_FAILURES": "2"
+  },
+  "ai": {
+    "binding": "AI"
+  },
+  "d1_databases": [
+    {
+      "binding": "CATALOG_DB",
+      "database_name": "avtr-catalog",
+      "database_id": "852cfa19-a1bc-4d30-b1c1-fd76f3cb3cb9",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "services": [
+    {
+      "binding": "VAD_SERVICE",
+      "service": "any-toy-vad"
+    },
+    {
+      "binding": "SMART_TURN_SERVICE",
+      "service": "any-toy-smart-turn"
+    }
+  ],
+  "ratelimits": [
+    {
+      "name": "RL_HEAVY",
+      "namespace_id": "1001",
+      "simple": { "limit": 5, "period": 60 }
+    },
+    {
+      "name": "RL_WRITE",
+      "namespace_id": "1002",
+      "simple": { "limit": 20, "period": 60 }
+    },
+    {
+      "name": "RL_LIGHT",
+      "namespace_id": "1003",
+      "simple": { "limit": 120, "period": 60 }
+    }
+  ],
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["AvatarSessionDO"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["SfuCapacityManager"]
+    }
+  ]
+}

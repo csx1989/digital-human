@@ -1,0 +1,4 @@
+PyGObject>=3.50
+aiohttp>=3.11
+numpy>=2.0,<3
+psutil>=6.0

@@ -56,4 +56,19 @@ def load_engine[InputT, OutputT](
     )
 
 
-__all__ = ["load_engine"]
+__all__ = ["load_engine", "load_engine_from_bytes"]
+
+
+def load_engine_from_bytes[InputT, OutputT](
+    data: bytes,
+    input_cls: type[InputT],
+    output_cls: type[OutputT],
+    *,
+    plugin_files: Iterable[str] = (),
+) -> InferenceEngine[InputT, OutputT]:
+    """Load a TRT engine from an in-memory byte buffer.
+
+    Used by the Modal snapshot path to preload engine bytes without
+    disk I/O during restore.
+    """
+    return TRTEngine.from_bytes(data, input_cls, output_cls, plugin_files=plugin_files)

@@ -112,6 +112,27 @@ class TRTEngine[InputT, OutputT]:
         assert engine is not None, f"Failed to deserialize {trt_file}"
         return cls(engine, input_cls, output_cls)
 
+    @classmethod
+    def from_bytes(
+        cls,
+        data: bytes,
+        input_cls: type[InputT],
+        output_cls: type[OutputT],
+        plugin_files: Iterable[str] = (),
+    ) -> "TRTEngine[InputT, OutputT]":
+        """Deserialise a TRT engine from an in-memory byte buffer.
+
+        Used by the Modal snapshot path to preload engine bytes without
+        disk I/O during restore.
+        """
+        for plugin in plugin_files:
+            ctypes.cdll.LoadLibrary(plugin)
+
+        runtime = trt.Runtime(_logger)
+        engine = runtime.deserialize_cuda_engine(data)
+        assert engine is not None, "Failed to deserialize engine from bytes"
+        return cls(engine, input_cls, output_cls)
+
     @staticmethod
     def _validate_tensors(
         tensors: dict[str, torch.Tensor],

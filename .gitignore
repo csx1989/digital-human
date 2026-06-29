@@ -14,6 +14,9 @@ build/
 .venv/
 venv/
 
+# JavaScript dependencies / local package-manager installs
+node_modules/
+
 # IDE
 .idea/
 .vscode/
@@ -27,6 +30,13 @@ typings/
 .coverage
 htmlcov/
 
+# Local dev/runtime state
+.vite/
+.wrangler/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
 # Output videos / images
 *.mp4
 *.avi
@@ -34,6 +44,10 @@ htmlcov/
 *.png
 *.jpg
 *.jpeg
+
+# Web client bundled assets (override image ignores)
+!avatar-saas-prototype/web-client/assets/
+!avatar-saas-prototype/web-client/assets/**
 
 # Model cache — engines are built locally, not committed
 ~/.cache/avaturn/
@@ -48,6 +62,13 @@ _metadata
 
 # HuggingFace cache (typically in HOME, but in case it's local)
 .cache/huggingface/
+
+# Local model weights/artifacts. Keep downloaded weights on disk, but do not
+# let Git/Codex diff or hash multi-GB model files during normal work.
+weights/**
+!weights/
+!weights/*/
+!weights/**/.gitattributes
 
 # Jupyter
 .ipynb_checkpoints/

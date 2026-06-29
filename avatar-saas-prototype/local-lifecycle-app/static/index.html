@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AVTR-1 Lifecycle Proof</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>AVTR-1 Lifecycle Proof</h1>
+        <p class="subtitle">Phase 4A: Browser Connect &rarr; Modal Snapshot Runtime &rarr; Avatar Ready</p>
+
+        <div id="status-bar" class="status-bar disconnected">
+            <span id="status-text">Disconnected</span>
+        </div>
+
+        <div class="controls">
+            <button id="btn-connect" onclick="doConnect()">Connect</button>
+            <button id="btn-stop" onclick="doStop()" disabled>Stop</button>
+            <button id="btn-debug" onclick="doDebugFrame()" disabled>Debug Frame</button>
+        </div>
+
+        <div class="panels">
+            <div class="panel avatar-panel">
+                <h2>Avatar</h2>
+                <div id="avatar-display">
+                    <div id="avatar-placeholder" class="placeholder">
+                        <p>No active session.</p>
+                        <p class="hint">Click Connect to start.</p>
+                    </div>
+                    <img id="avatar-img" style="display:none" alt="Debug avatar frame">
+                </div>
+            </div>
+
+            <div class="panel metadata-panel">
+                <h2>Session Info</h2>
+                <pre id="metadata">No session data.</pre>
+            </div>
+        </div>
+
+        <div id="error-bar" class="error-bar" style="display:none">
+            <span id="error-text"></span>
+            <button onclick="hideError()" class="btn-dismiss">&times;</button>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

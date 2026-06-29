@@ -1,0 +1,14 @@
+{
+  "name": "avtr-node-api-client",
+  "version": "1.0.0",
+  "description": "Dependency-free example client for Avatar API v1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node client.mjs",
+    "ws": "node client.mjs --ws"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
