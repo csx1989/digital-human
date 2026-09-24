@@ -110,9 +110,12 @@ class ArtifactManager:
         path = self._artifact_path(name)
         if not path.exists():
             src = self._artifacts[name]
-            repo = src.repo_id or self._repo_id
-            rev = src.revision or self._revision
-            LOG.info("Downloading %r from %s@%s", name, repo, rev)
+            if self._mirror_enabled(src):
+                LOG.info("Downloading %r from anon mirror", name)
+            else:
+                repo = src.repo_id or self._repo_id
+                rev = src.revision or self._revision
+                LOG.info("Downloading %r from %s@%s", name, repo, rev)
             self._download(name)
         return path
 
