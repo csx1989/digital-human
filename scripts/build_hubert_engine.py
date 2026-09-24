@@ -11,7 +11,7 @@ feature buffer carried in ``State``.
 
 Usage:
     pixi run python scripts/build_hubert_engine.py            # downloads ONNX from HF
-    pixi run python scripts/build_hubert_engine.py --onnx /path/to/hubert-lbs-avtr1.onnx
+    pixi run python scripts/build_hubert_engine.py --onnx /path/to/hubert-lbs.onnx
 """
 
 from __future__ import annotations
@@ -103,7 +103,7 @@ def main(argv: list[str] | None = None) -> None:
         "--onnx",
         type=Path,
         default=None,
-        help="Path to hubert-lbs-avtr1.onnx (default: downloaded from HuggingFace)",
+        help="Path to hubert-lbs.onnx (default: downloaded from HuggingFace)",
     )
     parser.add_argument(
         "--out",

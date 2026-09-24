@@ -31,12 +31,21 @@ Example::
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, NamedTuple
 
 LOG = logging.getLogger(__name__)
+
+# --- Anonymous blind-review mirror (anonymous-hf.com) -----------------------
+# When ``ANON_HF_MIRROR`` holds a mirror share code, main-repo artifacts are
+# pulled from the anonymous review viewer instead of HuggingFace. Artifacts that
+# override ``repo_id`` (e.g. the public Ditto models) always use HuggingFace.
+# ``resolve/<path>`` serves one file; ``tree/<path>`` lists a directory.
+ANON_HF_ENDPOINT = os.environ.get("ANON_HF_ENDPOINT", "https://anonymous-hf.com")
+ANON_HF_MIRROR = os.environ.get("ANON_HF_MIRROR", "dqf56bbgafsk").strip()
 
 
 class ArtifactSource(NamedTuple):
@@ -114,7 +123,54 @@ class ArtifactManager:
         else:
             self._download_file(name, src)
 
+    # --- Anonymous mirror fetch ------------------------------------------
+    def _mirror_enabled(self, src: ArtifactSource) -> bool:
+        """True when this artifact should come from the anon review mirror.
+
+        Only main-repo artifacts use the mirror; anything that overrides
+        ``repo_id`` (the public Ditto models) always uses HuggingFace.
+        """
+        return bool(ANON_HF_MIRROR) and (src.repo_id is None or src.repo_id == self._repo_id)
+
+    def _mirror_get(self, kind: str, repo_path: str) -> bytes:
+        import urllib.request
+
+        url = f"{ANON_HF_ENDPOINT}/api/a/{ANON_HF_MIRROR}/{kind}/{repo_path}"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req) as resp:
+            return resp.read()
+
+    def _mirror_fetch_file(self, repo_path: str, dest: Path) -> None:
+        data = self._mirror_get("resolve", repo_path)
+        # Guard against a Git-LFS pointer being served instead of the blob.
+        if data[:7] == b"version" and b"git-lfs" in data[:200]:
+            raise RuntimeError(
+                f"anon mirror returned an LFS pointer, not the file, for {repo_path!r}"
+            )
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(data)
+
+    def _mirror_fetch_dir(self, repo_path: str, dest_dir: Path) -> None:
+        import json
+        import posixpath
+
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        def walk(cur: str) -> None:
+            entries = json.loads(self._mirror_get("tree", cur).decode())
+            for entry in entries:
+                path = entry["path"]
+                if entry.get("type") == "directory":
+                    walk(path)
+                else:
+                    self._mirror_fetch_file(path, dest_dir / posixpath.relpath(path, repo_path))
+
+        walk(repo_path)
+
     def _download_file(self, name: str, src: ArtifactSource) -> None:
+        if self._mirror_enabled(src):
+            self._mirror_fetch_file(src.repo_path or src.path_in_repo, self._artifact_path(name))
+            return
         from huggingface_hub import hf_hub_download
 
         repo_id = src.repo_id or self._repo_id
@@ -132,6 +188,12 @@ class ArtifactManager:
         shutil.copy2(hf_path, dest)
 
     def _download_dir(self, name: str, src: ArtifactSource) -> None:
+        if self._mirror_enabled(src):
+            dest_dir = self._artifact_path(name)
+            if dest_dir.exists():
+                shutil.rmtree(dest_dir)
+            self._mirror_fetch_dir(src.repo_path or src.path_in_repo, dest_dir)
+            return
         from huggingface_hub import snapshot_download
 
         repo_id = src.repo_id or self._repo_id

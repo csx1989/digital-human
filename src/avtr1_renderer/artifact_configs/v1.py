@@ -31,8 +31,8 @@ Storage layout under ``{AVTR1_LOCAL_STORAGE}/{HF_REVISION}/`` (or
         warp_network_ori.onnx
         stitch_network.onnx
         modnet.onnx
-        hubert-lbs-avtr1.onnx
-        avtr1.scripted.pt
+        hubert-lbs.onnx
+        model.scripted.pt
     avatars_artifacts/
         backgrounds/
         reference_frames/
@@ -46,7 +46,7 @@ from __future__ import annotations
 from avtr1_renderer.artifact_manage_basic import ArtifactSource
 
 HF_REPO_ID = "avaturn-live/avtr-1"
-HF_REVISION = "main"
+HF_REVISION = "anon"
 
 # ---------------------------------------------------------------------------
 # Ditto ONNX models — loaded from digital-avatar/ditto-talkinghead on HF.
@@ -96,8 +96,8 @@ BUILD_ARTIFACTS: dict[str, ArtifactSource] = {
     "stitch_network_onnx":   _ditto("build_artifacts/stitch_network.onnx",   "stitch_network.onnx"),
     "modnet_onnx":           ArtifactSource("build_artifacts/modnet.onnx"),
     # From avtr1 HF repo — avtr1-specific models
-    "hubert_onnx":           ArtifactSource("build_artifacts/hubert-lbs-avtr1.onnx"),
-    "avtr1_scripted":         ArtifactSource("build_artifacts/avtr1.scripted.pt"),
+    "hubert_onnx":           ArtifactSource("build_artifacts/hubert-lbs.onnx"),
+    "avtr1_scripted":         ArtifactSource("build_artifacts/model.scripted.pt"),
 }
 
 # All HF-downloadable artifacts in one flat namespace for the single manager.

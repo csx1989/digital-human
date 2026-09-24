@@ -9,7 +9,7 @@ cuda = "12.8"
 
 [tasks]
 hf-login         = { cmd = "hf auth login", description = "Log in to HuggingFace (required before downloading artifacts)" }
-download         = { cmd = "python scripts/download_artifacts.py", description = "Download all model artifacts from HuggingFace", depends-on = ["hf-login"] }
+download         = { cmd = "python scripts/download_artifacts.py", description = "Download all model artifacts (anon review mirror + public Ditto; no login needed)" }
 generate_offline = { cmd = "python scripts/generate_offline.py", description = "Run end-to-end offline generation (requires built engines)" }
 
 [dependencies]
