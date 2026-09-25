@@ -61,6 +61,15 @@ class StreamClocks:
             else 0.0
         )
 
+    @property
+    def now_wall(self) -> float:
+        """Raw monotonic time. Unlike `now`, it is not shifted by the delays the clock absorbed."""
+        return aiotime()
+
+    @property
+    def started(self) -> bool:
+        return self._started_at is not None
+
     @asynccontextmanager
     async def measure_delay_after_deadline(
         self, deadline_at: float

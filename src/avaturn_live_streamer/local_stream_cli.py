@@ -76,6 +76,7 @@ from avaturn_live_streamer.renderer import create_renderer_client_registry
 from avaturn_live_streamer.runner import run_stream
 from avaturn_live_streamer.types import PixelFormat
 from avaturn_live_streamer.worklets.delayed_event import run_delayed_event_worklet
+from avaturn_live_streamer.worklets.latency import LatencyWorklet
 from avaturn_live_streamer.worklets.rendering import RenderingWorklet
 from avaturn_live_streamer.worklets.timeout import TimeoutWorklet
 
@@ -164,6 +165,7 @@ async def _run_session(
     rendering = RenderingWorklet(renderer_registry, renderer_config)
     peer_worklet = LocalRTCWorklet(peer, pixel_format)
     timeout_worklet = TimeoutWorklet(idle_timeout, max_duration)
+    latency_worklet = LatencyWorklet()
 
     needs_stop = asyncio.Event()
 
@@ -187,6 +189,7 @@ async def _run_session(
             run_delayed_event_worklet,
             engine_run,
             timeout_worklet.run,
+            latency_worklet.run,
             _emit_stop,
         )
     finally:

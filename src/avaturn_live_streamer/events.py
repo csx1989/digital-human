@@ -12,13 +12,12 @@ from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from avaturn_live_streamer.types import PhraseID
 from avaturn_live_streamer.management.types import SegmentId, SegmentMetadata
 from avaturn_live_streamer.sdk_events import ConversationEngineMessage
 from avaturn_live_streamer.speech.speech_buffer import SpeechBuffer
-from avaturn_live_streamer.types import PixelFormat
+from avaturn_live_streamer.types import PhraseID, PixelFormat
 
 # =============================================================================
 # INTERNAL EVENTS (dataclasses) - never cross transport boundary
@@ -199,6 +198,21 @@ CECommands = TextEchoCECommands | CommonCECommands
 # =============================================================================
 
 
+class TurnLatencies(BaseModel):
+    kind: Literal["turn_start", "interruption"]
+    t_wait: float
+    t_pad: float
+    t_lead: float
+    t_present: float
+    t_total: float
+    no_fragment_at_admit: bool
+    clock_started: bool
+    consistent: bool
+    # Loop-local monotonic reading, meaningless in another process. In-process consumers subtract it
+    # from `clocks.now_wall` at playback to get the wall-clock total.
+    arrival_monotonic: float = Field(exclude=True)
+
+
 class SegmentPlaybackStarted(BaseModel):
     """Avatar started speaking a segment."""
 
@@ -207,6 +221,8 @@ class SegmentPlaybackStarted(BaseModel):
     )
     segment_id: SegmentId
     metadata: SegmentMetadata = {}
+    # Optional so a segment with no computed breakdown (e.g. before the clock starts) still emits.
+    latencies: TurnLatencies | None = None
 
 
 class SegmentPlaybackCompleted(BaseModel):
@@ -228,6 +244,8 @@ class SegmentPlaybackInterrupted(BaseModel):
     segment_id: SegmentId
     played_duration: float
     metadata: SegmentMetadata = {}
+    # Optional so a segment with no computed breakdown (e.g. before the clock starts) still emits.
+    latencies: TurnLatencies | None = None
 
 
 class SegmentPlaybackCancelled(BaseModel):

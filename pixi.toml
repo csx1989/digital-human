@@ -11,6 +11,7 @@ cuda = "12.8"
 hf-login         = { cmd = "hf auth login", description = "Log in to HuggingFace (required before downloading artifacts)" }
 download         = { cmd = "python scripts/download_artifacts.py", description = "Download all model artifacts (anon review mirror + public Ditto; no login needed)" }
 generate_offline = { cmd = "python scripts/generate_offline.py", description = "Run end-to-end offline generation (requires built engines)" }
+latency-table    = { cmd = "python scripts/latency_table.py", description = "Parse a session log into the streamer-latency table" }
 
 [dependencies]
 python = "==3.12"
