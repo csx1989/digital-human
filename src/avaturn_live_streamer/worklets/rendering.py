@@ -10,10 +10,10 @@ from asyncstdlib import enumerate as aenumerate
 from attrs import Factory, define
 from opentelemetry import baggage, metrics
 
-from avaturn_live_streamer.core.logs import get_logger
 from avaturn_live_streamer import constant
 from avaturn_live_streamer.clocks import StreamClocks
 from avaturn_live_streamer.config import RendererConfig
+from avaturn_live_streamer.core.logs import get_logger
 from avaturn_live_streamer.event_bus import EventBus
 from avaturn_live_streamer.events import (
     DiscardAvatarSpeechBuffer,
@@ -27,6 +27,7 @@ from avaturn_live_streamer.events import (
     SegmentPlaybackInterrupted,
     SegmentPlaybackStarted,
     Shutdown,
+    TurnLatencies,
     UserSpeechReceived,
     UserSpeechStreamEnd,
     UserSpeechStreamStart,
@@ -47,6 +48,7 @@ from avaturn_live_streamer.speech.speech_buffer import SpeechBuffer
 from avaturn_live_streamer.speech.speech_scheduler import (
     SegmentCancelled,
     SegmentInterrupted,
+    SegmentLatencies,
     SpeechScheduler,
     TimestampedEvent,
 )
@@ -61,6 +63,23 @@ from avaturn_live_streamer.utils.exceptions import async_log_entry_exit
 
 _LOGGER = get_logger()
 _METER = metrics.get_meter(__name__)
+
+
+def _to_wire_latencies(latencies: SegmentLatencies | None) -> TurnLatencies | None:
+    if latencies is None:
+        return None
+    return TurnLatencies(
+        kind=latencies.kind,
+        t_wait=float(latencies.t_wait),
+        t_pad=float(latencies.t_pad),
+        t_lead=float(latencies.t_lead),
+        t_present=float(latencies.t_present),
+        t_total=float(latencies.t_total),
+        no_fragment_at_admit=latencies.no_fragment_at_admit,
+        clock_started=latencies.clock_started,
+        consistent=latencies.consistent,
+        arrival_monotonic=latencies.arrival_monotonic,
+    )
 
 # fmt: off
 _METRIC_RENDER_SLEEP_FOR = _METER.create_histogram(
@@ -115,11 +134,13 @@ class RenderingWorklet:
             sample_rate=constant.NATIVE_SPEECH_SAMPLE_RATE,
             present_duration=durations.present,
             future_duration=durations.future,
+            clocks=clocks,
         )
         user_speech_scheduler = SpeechScheduler(
             sample_rate=constant.RENDERER_SPEECH_SAMPLE_RATE,
             present_duration=durations.present,
             future_duration=durations.future,
+            clocks=clocks,
         )
 
         async with TaskGroup() as tg:
@@ -210,14 +231,18 @@ class RenderingWorklet:
             # Emit playback events from scheduler as delayed events
             for scheduler_event in step_result.events:
                 match scheduler_event:
-                    case TimestampedEvent(event=SchedulerSegmentStarted(id=sid), timestamp=ts):
+                    case TimestampedEvent(
+                        event=SchedulerSegmentStarted(id=sid), timestamp=ts, latencies=lat
+                    ):
                         # Get metadata but don't remove yet (will be removed on completion)
                         metadata = self._segment_metadata.get(SegmentId(sid), {})
                         await bus.publish(
                             ScheduledEvent(
                                 emit_at=ts,
                                 event=SegmentPlaybackStarted(
-                                    segment_id=SegmentId(sid), metadata=metadata
+                                    segment_id=SegmentId(sid),
+                                    metadata=metadata,
+                                    latencies=_to_wire_latencies(lat),
                                 ),
                             )
                         )
@@ -233,7 +258,9 @@ class RenderingWorklet:
                             )
                         )
                     case TimestampedEvent(
-                        event=SegmentInterrupted(id=sid, played_duration=duration), timestamp=ts
+                        event=SegmentInterrupted(id=sid, played_duration=duration),
+                        timestamp=ts,
+                        latencies=lat,
                     ):
                         # Remove metadata after segment is interrupted
                         metadata = self._get_and_remove_metadata(SegmentId(sid))
@@ -244,6 +271,7 @@ class RenderingWorklet:
                                     segment_id=SegmentId(sid),
                                     played_duration=float(duration),
                                     metadata=metadata,
+                                    latencies=_to_wire_latencies(lat),
                                 ),
                             )
                         )
